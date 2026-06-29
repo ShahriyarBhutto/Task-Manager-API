@@ -1,82 +1,68 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from database import engine, get_db, Base
+from models import Task
+
+# Tables create karo
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
+# Pydantic models
+class TaskCreate(BaseModel):
+    title: str
+    description: str
+    done: bool = False
 
-# temporary database, which will be replaced with database like SQLite
-temp_db = [
+class TaskUpdate(BaseModel):
+    title: str
+    description: str
+    done: bool
 
-{
-  "id": 1,
-  "title": "t1",
-  "description": "t1di",
-  "done": True
-},
-{
-  "id": 2,
-  "title": "t1",
-  "description": "t1di",
-  "done": True
-},
-{
-  "id": 3,
-  "title": "t1",
-  "description": "t1di",
-  "done": True
-}
-]
+class TaskResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    done: bool
+
+    class Config:
+        from_attributes = True
 
 
-# CreateTask class for the structure of the task's data
-
-class CreateTask(BaseModel):
-    title:str
-    description:str
-    done:bool = False
-
-
-# UpdateTask class for the structure of the tasks to be updated
-
-class UpdateTask(BaseModel):
-    title:str
-    description:str
-    done:bool
-
-
-
-# Create Task
-
-@app.post("/task")
-async def add_task(task:CreateTask):
-    mytask = {"id":len(temp_db)+1,"title":task.title,"description":task.description,"done":task.done}
-    temp_db.append(mytask)
-    return mytask    
-
-# Read Task
-
+# Routes
 @app.get("/")
-async def get_all_tasks():
-    return temp_db
+def get_all_tasks(db: Session = Depends(get_db)):
+    return db.query(Task).all()
 
 
+@app.post("/task", response_model=TaskResponse)
+def create_task(task: TaskCreate, db: Session = Depends(get_db)):
+    new_task = Task(title=task.title, description=task.description, done=task.done)
+    db.add(new_task)
+    db.commit()
+    db.refresh(new_task)
+    return new_task
 
-# Update Task
 
-@app.put("/task/{id}")
-async def update_task(id:int,valueUpdate:UpdateTask):
-    for index,task in enumerate(temp_db):
-        if task["id"] == id:
-            temp_db[index] = {"id":id,"title": valueUpdate.title,"description":valueUpdate.description,"done":valueUpdate.done}
-            return{"message":"Task updated"}
-    return{"message":"Task not found"}
+@app.put("/task/{id}", response_model=TaskResponse)
+def update_task(id: int, task: TaskUpdate, db: Session = Depends(get_db)):
+    existing = db.query(Task).filter(Task.id == id).first()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Task not found")
+    existing.title = task.title
+    existing.description = task.description
+    existing.done = task.done
+    db.commit()
+    db.refresh(existing)
+    return existing
 
-# Delete task
 
-@app.delete("/delete/{id}")
-async def delete_task(id:int):
-    for index,task in enumerate(temp_db):
-        if task["id"] == id:
-            temp_db.pop(index)
-            return {"message":"Task Deleted"}
-    return {"message":"Task not found"}
+@app.delete("/task/{id}")
+def delete_task(id: int, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    db.delete(task)
+    db.commit()
+    return {"message": "Task deleted"}
